@@ -996,7 +996,9 @@ impl Terminal {
     /// Clear `[from, to)` on row `y`, fixing up split wide characters.
     fn clear_cells(&mut self, y: usize, from: usize, to: usize) {
         let blank = self.blank();
-        let row = &mut self.grid[y];
+        let Some(row) = self.grid.get_mut(y) else {
+            return;
+        };
         let to = to.min(row.len());
         if from >= to {
             return;
@@ -2081,6 +2083,12 @@ fn reflow(
     if out.len() > start + rows {
         start = (out.len() - rows).max(start);
     }
+    // Showing the bottom of a long reflow can place that window below the
+    // cursor. `cursor_row - start` would then wrap, and the next erase
+    // indexes a one-row screen with a huge row.
+    if cursor_row < start {
+        start = cursor_row;
+    }
     if cursor_row >= start + rows {
         start = cursor_row + 1 - rows;
     }
@@ -2101,7 +2109,7 @@ fn reflow(
     let excess = out.len().saturating_sub(limit);
     scrollback.extend(out.into_iter().skip(excess));
 
-    cursor.y = cursor_row - start;
+    cursor.y = cursor_row.saturating_sub(start).min(rows.saturating_sub(1));
     cursor.x = cursor_x.min(cols - 1);
     cursor.wrap_pending = pending;
 }
@@ -2481,6 +2489,17 @@ mod tests {
         assert_eq!(text(&t, 0), "out");
         assert_eq!(text(&t, 1), "$ abcdefghijklmn");
         assert_eq!(text(&t, 2), "");
+    }
+
+    #[test]
+    fn resize_to_one_row_keeps_the_cursor_on_the_screen() {
+        let mut t = Terminal::new(10, 6, 100);
+        t.feed(b"aaaa\r\nbbbb\r\ncccc\r\n");
+        t.feed(b"\x1b[2A");
+        t.resize(10, 1);
+        assert!(t.cursor_position().1 < t.rows());
+        t.feed(b"\x1b[J");
+        assert_eq!(t.cursor_position().1, 0);
     }
 
     #[test]

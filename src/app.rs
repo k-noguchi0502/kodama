@@ -111,7 +111,11 @@ struct Pane {
 
 impl Pane {
     fn term(&self) -> MutexGuard<'_, Terminal> {
-        self.term.lock().unwrap()
+        // A reader-thread panic poisons this lock. Recovering keeps the
+        // window up; the panic itself is already in the crash log.
+        self.term
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn write(&mut self, bytes: &[u8]) {
