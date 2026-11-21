@@ -14,6 +14,10 @@ use crate::app::{App, UserEvent};
 use crate::config::Cli;
 
 fn main() {
+    // Writing to a closed pipe raises SIGPIPE and would kill the process.
+    // SAFETY: no other threads exist yet, so the disposition is process-wide.
+    let _ = unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN) };
+
     // Mesa prints a "not a conformant Vulkan implementation" banner on every
     // start for GPUs newer than its conformance submission (e.g. RDNA4).
     // SAFETY: no other threads exist yet.

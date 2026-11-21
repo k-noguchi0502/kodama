@@ -579,6 +579,11 @@ fn slice_index(x: f32, origin: f32, width: f32, count: usize, thickness: f32) ->
     Some(index)
 }
 
+/// `span` can be split into two cells of `cell` with `gap` between them.
+fn split_has_room(span: f32, gap: f32, cell: f32) -> bool {
+    cell.is_finite() && cell > 0.0 && span.is_finite() && span >= gap + cell * 2.0
+}
+
 /// Hands freed heap pages back to the system. glibc keeps them after large
 /// frees (a closed pane's history, a rewrapped one), so they would otherwise
 /// stay in kodama's resident memory.
@@ -893,7 +898,8 @@ fn spawn_pane(
         term.clone(),
         wakeup_pending.clone(),
         proxy.clone(),
-    );
+    )
+    .map_err(|e| format!("failed to spawn PTY reader: {e}"))?;
     Ok(Pane {
         term,
         pty,
@@ -1188,7 +1194,7 @@ fn spawn_reader(
     term: Arc<Mutex<Terminal>>,
     wakeup_pending: Arc<AtomicBool>,
     proxy: EventLoopProxy<UserEvent>,
-) {
+) -> std::io::Result<()> {
     thread::Builder::new()
         .name(format!("pty-reader-{id}"))
         .spawn(move || {
@@ -1215,7 +1221,7 @@ fn spawn_reader(
             }
             let _ = proxy.send_event(UserEvent::ChildExited(id));
         })
-        .expect("failed to spawn PTY reader thread");
+        .map(|_| ())
 }
 
 impl State {
@@ -1519,6 +1525,35 @@ impl State {
         self.split_width + 2.0 * self.split_padding
     }
 
+    /// The pane's layout rect. While zoomed, `pane.rect` is the whole window,
+    /// so the split has to be measured on the layout underneath.
+    fn unzoomed_rect(&self, id: PaneId) -> Rect {
+        if self.zoomed {
+            self.layout
+                .rects(self.area(), self.gap())
+                .into_iter()
+                .find(|(pane, _)| *pane == id)
+                .map(|(_, rect)| rect)
+                .unwrap_or_else(|| self.area())
+        } else {
+            self.panes
+                .get(&id)
+                .map(|pane| pane.rect)
+                .unwrap_or_else(|| self.area())
+        }
+    }
+
+    /// Both children of a split need a full cell once the divider is removed.
+    fn split_fits(&self, axis: Axis) -> bool {
+        let rect = self.unzoomed_rect(self.active);
+        let (cw, ch) = self.renderer.cell_size();
+        let (span, cell) = match axis {
+            Axis::Horizontal => (rect.w, cw),
+            Axis::Vertical => (rect.h, ch),
+        };
+        split_has_room(span, self.gap(), cell)
+    }
+
     /// Space between the tree and the panes. `tree.gap` replaces the padding
     /// on each side of that divider; otherwise it is the pane gap.
     fn tree_separator(&self) -> f32 {
@@ -1630,6 +1665,12 @@ impl State {
     }
 
     fn split(&mut self, axis: Axis, config: &Config) {
+        // Holding the key repeats this. Once a pane cannot hold two cells
+        // and the divider, another split is a zero-width shell. Enough of
+        // those stall the event loop until the compositor kills the process.
+        if !self.split_fits(axis) {
+            return;
+        }
         let cwd = self
             .pane_cwd(self.active)
             .map(|p| p.to_string_lossy().into_owned())
@@ -3623,13 +3664,21 @@ impl State {
             Action::SplitRight => self.split(Axis::Horizontal, config),
             Action::SplitDown => self.split(Axis::Vertical, config),
             Action::NewPane => {
-                let rect = self.panes[&self.active].rect;
+                let rect = self.unzoomed_rect(self.active);
                 let axis = if rect.w > rect.h {
                     Axis::Horizontal
                 } else {
                     Axis::Vertical
                 };
-                self.split(axis, config);
+                let other = match axis {
+                    Axis::Horizontal => Axis::Vertical,
+                    Axis::Vertical => Axis::Horizontal,
+                };
+                if self.split_fits(axis) {
+                    self.split(axis, config);
+                } else if self.split_fits(other) {
+                    self.split(other, config);
+                }
             }
             Action::MovePane(dir) => {
                 if !self.zoomed
@@ -4897,6 +4946,16 @@ impl ApplicationHandler<UserEvent> for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_split_needs_room_for_two_cells_and_the_divider() {
+        assert!(split_has_room(100.0, 13.0, 10.0));
+        assert!(split_has_room(33.0, 13.0, 10.0));
+        assert!(!split_has_room(32.0, 13.0, 10.0));
+        assert!(!split_has_room(20.0, 13.0, 22.0));
+        assert!(!split_has_room(100.0, 13.0, 0.0));
+        assert!(!split_has_room(f32::NAN, 13.0, 10.0));
+    }
 
     #[test]
     fn the_bar_cursor_blinks_on_then_off() {
