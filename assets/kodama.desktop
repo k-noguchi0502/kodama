@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Kodama
+GenericName=Terminal
+Comment=A GPU-accelerated terminal emulator
+Exec=kodama
+Icon=kodama
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=terminal;shell;prompt;command;
+StartupWMClass=kodama

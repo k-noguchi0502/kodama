@@ -1,0 +1,42 @@
+[package]
+name = "kodama"
+version = "0.1.0"
+edition = "2024"
+description = "A GPU-accelerated terminal emulator written from scratch in Rust"
+license = "MIT"
+repository = "https://github.com/pr3h1s/kodama"
+readme = "README.md"
+
+[package.metadata.deb]
+maintainer = "pr3h1s"
+section = "x11"
+depends = "$auto, fontconfig"
+extended-description = "Panes, tabs and a file tree built in, configured with Lua."
+assets = [
+    ["target/release/kodama", "usr/bin/", "755"],
+    ["assets/kodama.desktop", "usr/share/applications/", "644"],
+    ["assets/kodama.png", "usr/share/icons/hicolor/512x512/apps/", "644"],
+    ["examples/*", "usr/share/doc/kodama/examples/", "644"],
+]
+
+[dependencies]
+ab_glyph = "0.2"
+arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }
+bytemuck = { version = "1", features = ["derive"] }
+env_logger = "0.11"
+libc = "0.2"
+log = "0.4"
+memmap2 = "0.9"
+mlua = { version = "0.12", features = ["lua54", "vendored", "serde"] }
+flate2 = "1"
+png = "0.18.1"
+pollster = "1"
+rustybuzz = "0.20"
+serde = { version = "1", features = ["derive"] }
+unicode-width = "0.2"
+wgpu = "30"
+winit = "0.30"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

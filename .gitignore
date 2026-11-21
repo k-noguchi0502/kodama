@@ -1,0 +1,8 @@
+/target
+/dist
+/scripts
+/.cursor
+/.luarc.json
+*.log
+*.swp
+.DS_Store

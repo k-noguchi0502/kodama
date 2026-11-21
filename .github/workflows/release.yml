@@ -1,0 +1,78 @@
+name: Release
+
+# A push to master whose Cargo.toml version has no release yet builds the
+# installers and publishes them as release v<version>.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: "1.99.1"
+
+jobs:
+  version:
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      new: ${{ steps.tag.outputs.new }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          tag="v$version"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "new=false" >> "$GITHUB_OUTPUT"
+            echo "$tag is already released"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: version
+    if: needs.version.outputs.new == 'true'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libxkbcommon-dev libwayland-dev libx11-dev \
+            libxcursor-dev libxrandr-dev libxi-dev fontconfig fonts-dejavu-core
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --release
+      - run: cargo build --release
+      - name: Archive with install.sh
+        run: |
+          name="kodama-${{ needs.version.outputs.tag }}-x86_64-linux"
+          mkdir -p "dist/$name"
+          cp target/release/kodama assets/kodama.desktop assets/kodama.png \
+            packaging/install.sh README.md "dist/$name/"
+          cp -r examples docs "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+      - name: Debian package
+        run: |
+          cargo install cargo-deb --locked
+          cargo deb --no-build --output dist/
+      - run: cd dist && sha256sum *.tar.gz *.deb > SHA256SUMS
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ needs.version.outputs.tag }}" \
+            --target "$GITHUB_SHA" \
+            --title "Kodama ${{ needs.version.outputs.tag }}" \
+            --generate-notes \
+            dist/*.tar.gz dist/*.deb dist/SHA256SUMS
