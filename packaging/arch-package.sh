@@ -7,7 +7,7 @@
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)
+version=$(tr -d '[:space:]' < "$root/VERSION")
 pkgrel=1
 pkgver="$version-$pkgrel"
 name=kodama

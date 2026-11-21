@@ -1,7 +1,8 @@
 name: Release
 
-# A push to master whose Cargo.toml version has no release yet builds the
-# installers and publishes them as release v<version>.
+# A push to master whose VERSION has no release yet builds the installers
+# and publishes them as release v<version>. VERSION may have more than three
+# components; Cargo.toml cannot.
 on:
   push:
     branches: [master]
@@ -26,7 +27,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          version=$(tr -d '[:space:]' < VERSION)
           tag="v$version"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if gh release view "$tag" >/dev/null 2>&1; then
@@ -65,7 +66,7 @@ jobs:
       - name: Debian package
         run: |
           cargo install cargo-deb --locked
-          cargo deb --no-build --output dist/
+          cargo deb --no-build --output dist/ --deb-version "$(tr -d '[:space:]' < VERSION)-1"
       - name: Arch package
         run: |
           sudo apt-get install -y --no-install-recommends zstd libarchive-tools

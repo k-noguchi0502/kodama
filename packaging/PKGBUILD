@@ -2,7 +2,7 @@
 #   cd packaging && makepkg -si
 pkgname=kodama
 pkgrel=1
-pkgver=$(awk -F'"' '/^version = / { print $2; exit }' "$startdir/../Cargo.toml")
+pkgver=$(tr -d '[:space:]' < "$startdir/../VERSION")
 pkgdesc='A GPU-accelerated terminal emulator written from scratch in Rust'
 arch=('x86_64')
 url='https://github.com/k-noguchi0502/kodama'

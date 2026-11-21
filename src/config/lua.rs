@@ -511,7 +511,7 @@ fn install_api(lua: &Lua, path: &Path) -> mlua::Result<()> {
     package.set("path", format!("{dir}/?.lua;{dir}/?/init.lua;{search}"))?;
 
     let kodama = lua.create_table()?;
-    kodama.set("version", env!("CARGO_PKG_VERSION"))?;
+    kodama.set("version", include_str!("../../VERSION").trim())?;
     kodama.set("config_dir", dir)?;
     kodama.set("home", std::env::var("HOME").unwrap_or_default())?;
     kodama.set("os", std::env::consts::OS)?;
