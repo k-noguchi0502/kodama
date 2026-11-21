@@ -1,5 +1,6 @@
 mod app;
 mod config;
+mod diag;
 mod i18n;
 mod layout;
 mod pty;
@@ -31,11 +32,13 @@ fn main() {
         unsafe { libc::mallopt(libc::M_ARENA_MAX, 2) };
     }
 
-    env_logger::Builder::from_env(
-        env_logger::Env::default()
-            .default_filter_or("warn,wgpu_core=error,wgpu_hal=error,naga=error,calloop=error"),
-    )
-    .init();
+    diag::init();
+    log::info!(
+        "start version {} pid {} log {}",
+        include_str!("../VERSION").trim(),
+        std::process::id(),
+        diag::path().display(),
+    );
 
     let cli = Cli::parse();
     let event_loop = EventLoop::<UserEvent>::with_user_event()

@@ -1554,6 +1554,22 @@ impl State {
         split_has_room(span, self.gap(), cell)
     }
 
+    /// Pane geometry and process size, appended to the crash log.
+    fn diag(&self) -> String {
+        let rect = self.unzoomed_rect(self.active);
+        let (cw, ch) = self.renderer.cell_size();
+        let (rss, threads) = crate::diag::process_stats();
+        format!(
+            "panes={} rect={:.0}x{:.0} gap={:.1} cell={:.1}x{:.1} rss={rss}KiB threads={threads}",
+            self.panes.len(),
+            rect.w,
+            rect.h,
+            self.gap(),
+            cw,
+            ch,
+        )
+    }
+
     /// Space between the tree and the panes. `tree.gap` replaces the padding
     /// on each side of that divider; otherwise it is the pane gap.
     fn tree_separator(&self) -> f32 {
@@ -1669,8 +1685,10 @@ impl State {
         // and the divider, another split is a zero-width shell. Enough of
         // those stall the event loop until the compositor kills the process.
         if !self.split_fits(axis) {
+            log::info!("split refused: axis={axis:?} {}", self.diag());
             return;
         }
+        log::info!("split begin: axis={axis:?} {}", self.diag());
         let cwd = self
             .pane_cwd(self.active)
             .map(|p| p.to_string_lossy().into_owned())
@@ -1697,8 +1715,10 @@ impl State {
                 self.panes.insert(id, pane);
                 self.relayout();
                 self.set_active(id);
+                log::info!("split ok: pane={id} {}", self.diag());
             }
             Err(e) => {
+                log::warn!("split failed: {e} {}", self.diag());
                 self.layout.remove(id);
                 self.show_message(&e);
             }
@@ -3678,6 +3698,8 @@ impl State {
                     self.split(axis, config);
                 } else if self.split_fits(other) {
                     self.split(other, config);
+                } else {
+                    log::info!("new pane refused: {}", self.diag());
                 }
             }
             Action::MovePane(dir) => {
@@ -4709,10 +4731,15 @@ impl ApplicationHandler<UserEvent> for App {
         match self.init(event_loop) {
             Ok(state) => self.state = Some(state),
             Err(e) => {
+                log::error!("startup: {e}");
                 eprintln!("kodama: {e}");
                 event_loop.exit();
             }
         }
+    }
+
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        log::info!("exit");
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
@@ -4797,6 +4824,7 @@ impl ApplicationHandler<UserEvent> for App {
                 state.window.request_redraw();
             }
             UserEvent::ChildExited(id) => {
+                log::info!("pane {id} exited: {}", state.diag());
                 state.close_pane(id);
                 if state.panes.is_empty() {
                     state.save_session();
