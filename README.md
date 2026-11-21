@@ -24,19 +24,41 @@ Rust でゼロから書いた GPU (wgpu) 描画のターミナルエミュレー
 
 ## インストール
 
-[Releases](https://github.com/pr3h1s/kodama/releases/latest) から入手できます（x86_64 Linux）。
+[Releases](https://github.com/k-noguchi0502/kodama/releases/latest) から入手できます（x86_64 Linux）。
+
+### Arch Linux（pacman）
+
+`/etc/pacman.conf` の末尾に追加します。
+
+```ini
+[kodama]
+SigLevel = Optional TrustAll
+Server = https://github.com/k-noguchi0502/kodama/releases/latest/download
+```
 
 ```bash
-# アーカイブ版: ~/.local にバイナリ・デスクトップエントリ・アイコンを入れる
+sudo pacman -Sy
+sudo pacman -S kodama
+```
+
+このチェックアウトからパッケージを作って入れる場合は `cd packaging && makepkg -si` です。
+
+### Debian / Ubuntu
+
+```bash
+sudo apt install ./kodama_*_amd64.deb
+```
+
+### アーカイブ
+
+```bash
+# ~/.local にバイナリ・デスクトップエントリ・アイコンを入れる
 tar xzf kodama-v*-x86_64-linux.tar.gz
 cd kodama-v*-x86_64-linux && ./install.sh   # 削除は ./install.sh --uninstall
-
-# Debian / Ubuntu
-sudo apt install ./kodama_*.deb
 ```
 
 `Cargo.toml` の `version` を上げて master に push すると、
-GitHub Actions がビルドして新しいリリースとインストーラーを作ります。
+GitHub Actions がビルドして新しいリリース（pacman 用パッケージ、deb、アーカイブ）を作ります。
 
 ## ビルドと起動
 

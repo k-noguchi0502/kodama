@@ -1,16 +1,16 @@
 [package]
 name = "kodama"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "A GPU-accelerated terminal emulator written from scratch in Rust"
 license = "MIT"
-repository = "https://github.com/pr3h1s/kodama"
+repository = "https://github.com/k-noguchi0502/kodama"
 readme = "README.md"
 
 [package.metadata.deb]
 maintainer = "pr3h1s"
 section = "x11"
-depends = "$auto, fontconfig"
+depends = "$auto, fontconfig, libwayland-client0, libwayland-egl1, libxkbcommon0, libxkbcommon-x11-0, libx11-6, libxcursor1, libxi6, libegl1, libvulkan1"
 extended-description = "Panes, tabs and a file tree built in, configured with Lua."
 assets = [
     ["target/release/kodama", "usr/bin/", "755"],

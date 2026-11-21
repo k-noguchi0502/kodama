@@ -66,7 +66,11 @@ jobs:
         run: |
           cargo install cargo-deb --locked
           cargo deb --no-build --output dist/
-      - run: cd dist && sha256sum *.tar.gz *.deb > SHA256SUMS
+      - name: Arch package
+        run: |
+          sudo apt-get install -y --no-install-recommends zstd libarchive-tools
+          packaging/arch-package.sh
+      - run: cd dist && sha256sum *.tar.gz *.deb *.pkg.tar.zst > SHA256SUMS
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -75,4 +79,5 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "Kodama ${{ needs.version.outputs.tag }}" \
             --generate-notes \
-            dist/*.tar.gz dist/*.deb dist/SHA256SUMS
+            dist/*.tar.gz dist/*.deb dist/*.pkg.tar.zst \
+            dist/kodama.db dist/kodama.db.tar.gz dist/SHA256SUMS

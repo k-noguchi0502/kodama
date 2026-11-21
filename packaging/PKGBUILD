@@ -1,0 +1,38 @@
+# Build Kodama from this checkout and install it with pacman:
+#   cd packaging && makepkg -si
+pkgname=kodama
+pkgrel=1
+pkgver=$(awk -F'"' '/^version = / { print $2; exit }' "$startdir/../Cargo.toml")
+pkgdesc='A GPU-accelerated terminal emulator written from scratch in Rust'
+arch=('x86_64')
+url='https://github.com/k-noguchi0502/kodama'
+license=('MIT')
+depends=(
+  fontconfig
+  glibc
+  libgcc
+  libglvnd
+  libx11
+  libxcursor
+  libxi
+  libxkbcommon
+  libxkbcommon-x11
+  vulkan-icd-loader
+  wayland
+)
+optdepends=('vulkan-driver: Vulkan GPU driver')
+makedepends=('cargo' 'pkgconf')
+
+build() {
+  cd "$startdir/.."
+  cargo build --release --locked
+}
+
+package() {
+  cd "$startdir/.."
+  install -Dm755 target/release/kodama "$pkgdir/usr/bin/kodama"
+  install -Dm644 assets/kodama.desktop "$pkgdir/usr/share/applications/kodama.desktop"
+  install -Dm644 assets/kodama.png "$pkgdir/usr/share/icons/hicolor/512x512/apps/kodama.png"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 examples/* -t "$pkgdir/usr/share/doc/$pkgname/examples/"
+}
