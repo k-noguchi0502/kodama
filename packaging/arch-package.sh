@@ -132,9 +132,8 @@ wayland
 vulkan-driver: Vulkan GPU driver
 EOF
 
-# pacman accepts either name. GitHub releases cannot store the .db symlink
-# that repo-add creates, so both assets are real gzip files.
-tar -C "$tmpdir/db" -czf "$root/dist/$name.db.tar.gz" "${name}-${pkgver}"
-cp "$root/dist/$name.db.tar.gz" "$root/dist/$name.db"
+# The file is gzip. Its asset name is kodama.db so it does not also match
+# the release archive glob (*.tar.gz) and get uploaded twice.
+tar -C "$tmpdir/db" -czf "$root/dist/$name.db" "${name}-${pkgver}"
 echo "Wrote $outfile"
 echo "Wrote $root/dist/$name.db"

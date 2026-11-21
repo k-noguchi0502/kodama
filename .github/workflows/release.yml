@@ -79,5 +79,5 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "Kodama ${{ needs.version.outputs.tag }}" \
             --generate-notes \
-            dist/*.tar.gz dist/*.deb dist/*.pkg.tar.zst \
-            dist/kodama.db dist/kodama.db.tar.gz dist/SHA256SUMS
+            dist/kodama-v*.tar.gz dist/*.deb dist/*.pkg.tar.zst \
+            dist/kodama.db dist/SHA256SUMS
