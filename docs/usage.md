@@ -187,9 +187,10 @@ source ~/.config/kodama/shell-integration.zsh   # examples/ からコピー
 保存されるのはスキーム名だけで、`theme.lua` の他の内容（コメント、`colors` の上書き、自作スキーム）はそのまま残ります。
 
 *Language: …* を選ぶと表示言語が切り替わり、`config.lua` の `language` に保存されます。
-同梱は `en`（English）と `ja`（日本語）です。読み込まれるのは選んだ言語のファイルだけで、
-一覧（`lang/index.lua` とファイル名）以外の翻訳ファイルは開きません。
-`~/.config/kodama/lang/ja.lua` のように置くと同梱のファイルより優先されます。
+同梱は `en`（English）と `ja`（日本語）です。インストールすると
+`share/kodama/lang/`（pacman なら `/usr/share/kodama/lang/`）に置かれます。
+読み込まれるのは選んだ言語のファイルだけで、一覧（`lang/index.lua` とファイル名）以外の
+翻訳ファイルは開きません。`~/.config/kodama/lang/ja.lua` のように置くと同梱のファイルより優先されます。
 `config.lua` に `language = "ja"` と書いても同じです。
 
 ## ファイルツリー

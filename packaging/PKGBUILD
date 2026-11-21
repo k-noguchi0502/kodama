@@ -35,4 +35,5 @@ package() {
   install -Dm644 assets/kodama.png "$pkgdir/usr/share/icons/hicolor/512x512/apps/kodama.png"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 examples/* -t "$pkgdir/usr/share/doc/$pkgname/examples/"
+  install -Dm644 lang/*.lua -t "$pkgdir/usr/share/kodama/lang/"
 }

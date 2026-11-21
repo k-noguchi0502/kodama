@@ -152,18 +152,36 @@ pub fn lang_dirs(config_path: &Path) -> Vec<PathBuf> {
     if let Some(parent) = config_path.parent() {
         dirs.push(parent.join("lang"));
     }
-    if let Some(root) = option_env!("CARGO_MANIFEST_DIR") {
-        dirs.push(PathBuf::from(root).join("lang"));
-    }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        let lang = dir.join("lang");
-        if !dirs.iter().any(|d| d == &lang) {
-            dirs.push(lang);
+    if let Ok(exe) = std::env::current_exe() {
+        // `/usr/bin/kodama` -> `/usr/share/kodama/lang`, and the same for
+        // `~/.local`. An unpacked archive keeps `lang/` beside the binary.
+        if let Some(dir) = installed_lang_dir(&exe) {
+            push_unique(&mut dirs, dir);
+        }
+        if let Some(dir) = exe.parent() {
+            push_unique(&mut dirs, dir.join("lang"));
         }
     }
+    if let Some(root) = option_env!("CARGO_MANIFEST_DIR") {
+        push_unique(&mut dirs, PathBuf::from(root).join("lang"));
+    }
     dirs
+}
+
+/// `share/kodama/lang` next to the `bin` directory that holds `exe`.
+fn installed_lang_dir(exe: &Path) -> Option<PathBuf> {
+    let bin = exe.parent()?;
+    if bin.file_name().and_then(|name| name.to_str()) == Some("bin") {
+        Some(bin.parent()?.join("share/kodama/lang"))
+    } else {
+        None
+    }
+}
+
+fn push_unique(dirs: &mut Vec<PathBuf>, dir: PathBuf) {
+    if !dirs.iter().any(|have| have == &dir) {
+        dirs.push(dir);
+    }
 }
 
 /// Languages on offer. Reads `index.lua` for display names and the file
@@ -340,6 +358,19 @@ mod tests {
         assert_eq!(lang.get("palette.current"), "now");
         assert_eq!(lang.get("palette.no_matches"), "no matching commands");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn installed_lang_dir_follows_the_bin_prefix() {
+        assert_eq!(
+            installed_lang_dir(Path::new("/usr/bin/kodama")).as_deref(),
+            Some(Path::new("/usr/share/kodama/lang"))
+        );
+        assert_eq!(
+            installed_lang_dir(Path::new("/home/me/.local/bin/kodama")).as_deref(),
+            Some(Path::new("/home/me/.local/share/kodama/lang"))
+        );
+        assert!(installed_lang_dir(Path::new("/tmp/kodama")).is_none());
     }
 
     #[test]

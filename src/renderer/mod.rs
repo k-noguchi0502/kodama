@@ -395,6 +395,9 @@ struct Run {
 /// What the renderer needs to know besides the terminal grid.
 struct FrameInfo<'a> {
     focused: bool,
+    /// The bar cursor is hidden on the off half of its blink. Other shapes
+    /// ignore this.
+    cursor_on: bool,
     preedit: &'a str,
     marks: &'a [Mark],
     labels: &'a [(Point, String)],
@@ -431,6 +434,8 @@ pub struct PaneView<'a> {
     pub origin: (f32, f32),
     /// Whether this pane has keyboard focus (and the window is focused).
     pub focused: bool,
+    /// Draw the bar cursor. False on the off half of a blink in the focused pane.
+    pub cursor_on: bool,
     pub preedit: &'a str,
     pub marks: &'a [Mark],
     /// Quick select labels drawn over the text, starting at their cell.
@@ -452,6 +457,7 @@ impl PaneView<'_> {
     fn frame<'a>(&'a self, colors: &'a Colors) -> FrameInfo<'a> {
         FrameInfo {
             focused: self.focused,
+            cursor_on: self.cursor_on,
             preedit: self.preedit,
             marks: self.marks,
             labels: self.labels,
@@ -1600,9 +1606,15 @@ impl Renderer {
             let y = oy + cursor_row as f32 * stride;
             let color = rgba(colors.cursor);
             let thick = (stroke * 2.0).max(2.0);
+            // The bar is a little narrower and shorter than the cell, and
+            // blinks only while this pane has focus.
+            let bar_w = (stroke * 1.5).max(1.0);
+            let inset = (ch * 0.1).max(1.0);
+            let bar_h = (ch - inset * 2.0).max(bar_w);
             let fg = &mut self.foregrounds;
             match (frame.focused, term.cursor_shape) {
-                (true, CursorShape::Bar) => Self::push_rect(fg, x, y, thick, ch, color),
+                (_, CursorShape::Bar) if frame.focused && !frame.cursor_on => {}
+                (_, CursorShape::Bar) => Self::push_rect(fg, x, y + inset, bar_w, bar_h, color),
                 (true, CursorShape::Underline) => {
                     Self::push_rect(fg, x, y + ch - thick, col_stride, thick, color)
                 }

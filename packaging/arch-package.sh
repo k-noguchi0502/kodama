@@ -30,13 +30,15 @@ mkdir -p \
   "$pkg/usr/share/applications" \
   "$pkg/usr/share/icons/hicolor/512x512/apps" \
   "$pkg/usr/share/licenses/$name" \
-  "$pkg/usr/share/doc/$name/examples"
+  "$pkg/usr/share/doc/$name/examples" \
+  "$pkg/usr/share/kodama/lang"
 
 install -Dm755 "$binary" "$pkg/usr/bin/kodama"
 install -Dm644 "$root/assets/kodama.desktop" "$pkg/usr/share/applications/kodama.desktop"
 install -Dm644 "$root/assets/kodama.png" "$pkg/usr/share/icons/hicolor/512x512/apps/kodama.png"
 install -Dm644 "$root/LICENSE" "$pkg/usr/share/licenses/$name/LICENSE"
 find "$root/examples" -maxdepth 1 -type f -exec install -Dm644 {} "$pkg/usr/share/doc/$name/examples/" \;
+find "$root/lang" -maxdepth 1 -type f -name '*.lua' -exec install -Dm644 {} "$pkg/usr/share/kodama/lang/" \;
 
 isize=$(find "$pkg/usr" -type f -printf '%s\n' | awk '{s += $1} END {print s}')
 builddate=$(date -u +%s)

@@ -1,6 +1,6 @@
 [package]
 name = "kodama"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "A GPU-accelerated terminal emulator written from scratch in Rust"
 license = "MIT"
@@ -17,6 +17,7 @@ assets = [
     ["assets/kodama.desktop", "usr/share/applications/", "644"],
     ["assets/kodama.png", "usr/share/icons/hicolor/512x512/apps/", "644"],
     ["examples/*", "usr/share/doc/kodama/examples/", "644"],
+    ["lang/*", "usr/share/kodama/lang/", "644"],
 ]
 
 [dependencies]

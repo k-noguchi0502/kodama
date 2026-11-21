@@ -23,14 +23,29 @@ done
 bin="$prefix/bin/kodama"
 desktop="$prefix/share/applications/kodama.desktop"
 icon="$prefix/share/icons/hicolor/512x512/apps/kodama.png"
+lang="$prefix/share/kodama/lang"
 
 if [ "$uninstall" -eq 1 ]; then
   rm -f "$bin" "$desktop" "$icon"
+  if [ -d "$here/lang" ]; then
+    for f in "$here/lang"/*.lua; do
+      [ -f "$f" ] || continue
+      rm -f "$lang/$(basename "$f")"
+    done
+    rmdir "$lang" 2>/dev/null || true
+    rmdir "$prefix/share/kodama" 2>/dev/null || true
+  fi
   echo "Removed Kodama from $prefix"
 else
   install -Dm755 "$here/kodama" "$bin"
   install -Dm644 "$here/kodama.desktop" "$desktop"
   install -Dm644 "$here/kodama.png" "$icon"
+  if [ -d "$here/lang" ]; then
+    for f in "$here/lang"/*.lua; do
+      [ -f "$f" ] || continue
+      install -Dm644 "$f" "$lang/$(basename "$f")"
+    done
+  fi
   echo "Installed Kodama to $bin"
   case ":$PATH:" in
     *":$prefix/bin:"*) ;;

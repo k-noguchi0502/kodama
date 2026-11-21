@@ -199,6 +199,10 @@ struct State {
     rang: std::collections::HashSet<PaneId>,
     /// The pane flashing for a bell, until when.
     bell_flash: Option<(PaneId, Instant)>,
+    /// Start of the bar-cursor blink cycle.
+    cursor_epoch: Instant,
+    /// Whether the blinking bar is currently drawn.
+    cursor_blink_on: bool,
     /// When `bell.command` last ran.
     bell_command_at: Option<Instant>,
     hostname: String,
@@ -417,6 +421,8 @@ impl App {
             tab_spans: Vec::new(),
             rang: Default::default(),
             bell_flash: None,
+            cursor_epoch: Instant::now(),
+            cursor_blink_on: true,
             bell_command_at: None,
             confirm_quit: false,
             quit: false,
@@ -4496,6 +4502,7 @@ impl State {
                         term,
                         origin: (b.left, b.top),
                         focused: pane_focused && *id == self.active,
+                        cursor_on: self.cursor_blink_on,
                         preedit: if *id == self.active
                             && self.palette.is_none()
                             && self.renaming.is_none()
@@ -4518,6 +4525,7 @@ impl State {
                 term,
                 origin: (r.x, r.y),
                 focused,
+                cursor_on: true,
                 preedit: "",
                 marks: &[],
                 labels: &[],
@@ -4609,6 +4617,41 @@ impl State {
     }
 }
 
+/// Half-period of the bar cursor. On for this long, then off.
+const CURSOR_BLINK: Duration = Duration::from_millis(500);
+
+fn cursor_phase_on(elapsed: Duration) -> bool {
+    (elapsed.as_millis() / CURSOR_BLINK.as_millis()).is_multiple_of(2)
+}
+
+fn cursor_blink_deadline(epoch: Instant) -> Instant {
+    let step = CURSOR_BLINK.as_millis();
+    let into = epoch.elapsed().as_millis() % step;
+    let remain = if into == 0 { step } else { step - into };
+    Instant::now() + Duration::from_millis(remain as u64)
+}
+
+impl State {
+    /// The bar cursor blinks while the active pane has keyboard focus.
+    fn cursor_blinks(&self) -> bool {
+        if !self.focused
+            || self.tree_focused
+            || self.search.is_some()
+            || self.palette.is_some()
+            || self.renaming.is_some()
+            || self.quick_select.is_some()
+            || self.copy_mode.is_some()
+        {
+            return false;
+        }
+        let Some(pane) = self.panes.get(&self.active) else {
+            return false;
+        };
+        let term = pane.term();
+        term.modes.show_cursor && term.cursor_shape == crate::terminal::CursorShape::Bar
+    }
+}
+
 impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.state.is_some() {
@@ -4626,13 +4669,30 @@ impl ApplicationHandler<UserEvent> for App {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         use winit::event_loop::ControlFlow;
         let Some(state) = &mut self.state else { return };
-        match state.bell_flash {
-            Some((_, until)) if Instant::now() >= until => {
+        let now = Instant::now();
+        let mut wake = None;
+        if let Some((_, until)) = state.bell_flash {
+            if now >= until {
                 state.bell_flash = None;
                 state.window.request_redraw();
-                event_loop.set_control_flow(ControlFlow::Wait);
+            } else {
+                wake = Some(until);
             }
-            Some((_, until)) => event_loop.set_control_flow(ControlFlow::WaitUntil(until)),
+        }
+        if state.cursor_blinks() {
+            let on = cursor_phase_on(state.cursor_epoch.elapsed());
+            if on != state.cursor_blink_on {
+                state.cursor_blink_on = on;
+                state.window.request_redraw();
+            }
+            let until = cursor_blink_deadline(state.cursor_epoch);
+            wake = Some(wake.map_or(until, |at| at.min(until)));
+        } else if !state.cursor_blink_on {
+            state.cursor_blink_on = true;
+            state.window.request_redraw();
+        }
+        match wake {
+            Some(until) => event_loop.set_control_flow(ControlFlow::WaitUntil(until)),
             None => event_loop.set_control_flow(ControlFlow::Wait),
         }
     }
@@ -4837,6 +4897,15 @@ impl ApplicationHandler<UserEvent> for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_bar_cursor_blinks_on_then_off() {
+        assert!(cursor_phase_on(Duration::ZERO));
+        assert!(cursor_phase_on(Duration::from_millis(499)));
+        assert!(!cursor_phase_on(Duration::from_millis(500)));
+        assert!(!cursor_phase_on(Duration::from_millis(999)));
+        assert!(cursor_phase_on(Duration::from_millis(1000)));
+    }
 
     #[test]
     fn the_window_icon_decodes() {

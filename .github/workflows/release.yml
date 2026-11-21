@@ -60,7 +60,7 @@ jobs:
           mkdir -p "dist/$name"
           cp target/release/kodama assets/kodama.desktop assets/kodama.png \
             packaging/install.sh README.md "dist/$name/"
-          cp -r examples docs "dist/$name/"
+          cp -r examples docs lang "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
       - name: Debian package
         run: |
