@@ -571,13 +571,25 @@ impl Terminal {
         if style != PLAIN {
             out.push_str("\x1b[0m");
         }
+        // The cursor often sits in empty space after the prompt. Stop there.
+        // A blank line below the text is part of that position; the line
+        // after it is not. The alternate screen's cursor belongs to the
+        // full-screen program, not to the shell grid just swapped in.
+        if !self.alt_screen {
+            let cursor_line = self.scrollback.len() + self.cursor.y;
+            if cursor_line > last {
+                for _ in last..cursor_line {
+                    out.push('\n');
+                }
+            }
+        }
         out
     }
 
-    /// Shows `text` as if the shell had printed it, and leaves the cursor on
-    /// the following line. SGR colour sequences are kept. Every other escape
-    /// sequence is dropped, so a saved screen cannot clear itself or write
-    /// the clipboard.
+    /// Shows `text` as if the shell had printed it, and leaves the cursor
+    /// where that text ends. SGR colour sequences are kept. Every other
+    /// escape sequence is dropped, so a saved screen cannot clear itself or
+    /// write the clipboard.
     pub fn show_transcript(&mut self, text: &str) {
         let bytes = sanitize_transcript(text.as_bytes());
         if !bytes.is_empty() {
@@ -2300,9 +2312,6 @@ fn sanitize_transcript(text: &[u8]) -> Vec<u8> {
             _ => i += 1,
         }
     }
-    if !out.is_empty() && !out.ends_with(b"\n") {
-        out.extend_from_slice(b"\r\n");
-    }
     out
 }
 
@@ -2474,6 +2483,32 @@ mod tests {
         assert_eq!(blanks[0].bg, Color::Indexed(1));
         assert_eq!(blanks[1].bg, Color::Indexed(1));
         assert_eq!(restored.transcript(), saved);
+    }
+
+    #[test]
+    fn a_restored_transcript_stays_at_the_cursor() {
+        let mut t = Terminal::new(20, 6, 100);
+        t.feed(b"$ echo hi\r\nhi\r\n$ ");
+        let saved = t.transcript();
+        let row = t.cursor_position().1;
+        let mut restored = Terminal::new(20, 6, 100);
+        restored.show_transcript(&saved);
+        // The prompt's trailing space is empty padding, so the cursor sits
+        // on that same line and the line under it stays empty.
+        assert_eq!(restored.cursor_position().1, row);
+        assert_eq!(restored.transcript(), saved);
+        assert!(restored.line(row + 1).iter().all(is_padding));
+
+        // A blank line the cursor is on is kept. The line under that is not.
+        let mut t = Terminal::new(20, 6, 100);
+        t.feed(b"$ echo hi\r\nhi\r\n");
+        assert_eq!(t.cursor_position(), (0, 2));
+        let saved = t.transcript();
+        assert!(saved.ends_with('\n'), "{saved:?}");
+        let mut restored = Terminal::new(20, 6, 100);
+        restored.show_transcript(&saved);
+        assert_eq!(restored.cursor_position(), (0, 2));
+        assert!(restored.line(3).iter().all(is_padding));
     }
 
     #[test]
