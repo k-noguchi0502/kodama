@@ -132,7 +132,7 @@ return {
 
   -- Each of these is on unless set to false.
   features = {
-    restore_layout = true, -- save tabs, splits, directories and the open tree
+    restore_layout = true, -- save tabs, splits, directories, pane text and the open tree
     file_tree = true, -- the sidebar; also restored when it was open
     tree_open_split = true, -- s in the file tree opens the selection in a new pane
     quick_select = true, -- label URLs and paths on screen

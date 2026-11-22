@@ -17,6 +17,11 @@ use crate::terminal::CursorShape;
 
 pub type Rgb = [u8; 3];
 
+/// Release version from `VERSION`. Cargo's package version stays in lockstep.
+pub fn version() -> &'static str {
+    include_str!("../../VERSION").trim()
+}
+
 /// Parses `#rrggbb`, `rrggbb` or `#rgb`.
 pub fn parse_hex(s: &str) -> Result<Rgb, String> {
     let hex = s.trim().trim_start_matches('#');
@@ -982,7 +987,8 @@ pub fn default_keys(sup: u8) -> Vec<KeyBinding> {
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Features {
-    /// Save the tabs, splits and directories, and restore them next launch.
+    /// Save the tabs, splits, directories and each pane's text, and restore
+    /// them next launch. The text is shown again; commands are not re-run.
     pub restore_layout: bool,
     /// The file tree sidebar.
     pub file_tree: bool,
@@ -1159,6 +1165,7 @@ OPTIONS:
         --no-ligatures       Disable font ligatures
         --scrollback <LINES> Scrollback lines
     -e, --command <CMD>...   Run CMD instead of the configured shell
+    -V, --version            Print the version and exit
     -h, --help               Print help
 
 ENVIRONMENT:
@@ -1179,6 +1186,10 @@ impl Cli {
             match arg.as_str() {
                 "-h" | "--help" => {
                     print!("{USAGE}");
+                    std::process::exit(0);
+                }
+                "-V" | "--version" => {
+                    println!("kodama {}", version());
                     std::process::exit(0);
                 }
                 "-c" | "--config" => cli.config = Some(value().into()),

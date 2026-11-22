@@ -1,5 +1,6 @@
-//! The saved window: tabs, splits and each pane's directory, beside the
-//! config file. A missing file is not an error.
+//! The saved window: tabs, splits, each pane's directory and the text that
+//! was on its screen, beside the config file. A missing file is not an error.
+//! Restored text is shown again; the commands are not run a second time.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -15,6 +16,8 @@ pub struct SavedTab {
     pub shape: Shape,
     /// Working directory of each leaf, when one was known.
     pub dirs: HashMap<u32, String>,
+    /// Commands and output that were on each leaf's primary screen.
+    pub screens: HashMap<u32, String>,
 }
 
 /// Every tab, and which one was current.
@@ -28,7 +31,9 @@ pub struct Session {
     pub tree_width: Option<usize>,
 }
 
-const HEADER: &str = "kodama-session 1";
+const HEADER: &str = "kodama-session 2";
+/// Layout only, from before pane text was saved.
+const HEADER_V1: &str = "kodama-session 1";
 /// Written before the rename from trex.
 const LEGACY_HEADER: &str = "trex-session 1";
 
@@ -81,14 +86,17 @@ pub fn encode(session: &Session) -> String {
             Some(title) => out.push_str(&format!("title {}\n", escape(title))),
             None => out.push_str("title -\n"),
         }
-        write_shape(&mut out, &tab.shape, &tab.dirs);
+        write_shape(&mut out, &tab.shape, &tab.dirs, &tab.screens);
     }
     out
 }
 
 pub fn decode(text: &str) -> Result<Session, String> {
     let mut lines: Vec<&str> = text.lines().filter(|l| !l.is_empty()).collect();
-    if !matches!(lines.first().copied(), Some(HEADER | LEGACY_HEADER)) {
+    if !matches!(
+        lines.first().copied(),
+        Some(HEADER | HEADER_V1 | LEGACY_HEADER)
+    ) {
         return Err("not a kodama session".into());
     }
     lines.remove(0);
@@ -141,17 +149,23 @@ fn decode_tab(lines: &mut Vec<&str>) -> Result<SavedTab, String> {
         text => Some(unescape(text)),
     };
     let mut dirs = HashMap::new();
-    let shape = decode_shape(lines, &mut dirs)?;
+    let mut screens = HashMap::new();
+    let shape = decode_shape(lines, &mut dirs, &mut screens)?;
     Ok(SavedTab {
         title,
         active,
         zoomed,
         shape,
         dirs,
+        screens,
     })
 }
 
-fn decode_shape(lines: &mut Vec<&str>, dirs: &mut HashMap<u32, String>) -> Result<Shape, String> {
+fn decode_shape(
+    lines: &mut Vec<&str>,
+    dirs: &mut HashMap<u32, String>,
+    screens: &mut HashMap<u32, String>,
+) -> Result<Shape, String> {
     let line = lines
         .first()
         .copied()
@@ -166,8 +180,8 @@ fn decode_shape(lines: &mut Vec<&str>, dirs: &mut HashMap<u32, String>) -> Resul
         let ratio = rest
             .parse::<f32>()
             .map_err(|_| format!("bad split ratio `{rest}`"))?;
-        let first = decode_shape(lines, dirs)?;
-        let second = decode_shape(lines, dirs)?;
+        let first = decode_shape(lines, dirs, screens)?;
+        let second = decode_shape(lines, dirs, screens)?;
         return Ok(Shape::Split {
             axis,
             ratio,
@@ -188,6 +202,18 @@ fn decode_shape(lines: &mut Vec<&str>, dirs: &mut HashMap<u32, String>) -> Resul
     if path != "-" {
         dirs.insert(id, path);
     }
+    if let Some(line) = lines.first().copied()
+        && let Some(data) = line.strip_prefix("scrollback ")
+    {
+        lines.remove(0);
+        // A bad payload keeps the layout and drops just this pane's text.
+        if let Some(bytes) = crate::terminal::graphics::base64_decode(data.as_bytes())
+            && let Ok(text) = String::from_utf8(bytes)
+            && !text.is_empty()
+        {
+            screens.insert(id, text);
+        }
+    }
     Ok(Shape::Leaf(id))
 }
 
@@ -203,11 +229,20 @@ fn take_prefix<'a>(lines: &mut Vec<&'a str>, prefix: &str) -> Result<&'a str, St
     Ok(rest)
 }
 
-fn write_shape(out: &mut String, shape: &Shape, dirs: &HashMap<u32, String>) {
+fn write_shape(
+    out: &mut String,
+    shape: &Shape,
+    dirs: &HashMap<u32, String>,
+    screens: &HashMap<u32, String>,
+) {
     match shape {
         Shape::Leaf(id) => {
             let dir = dirs.get(id).map(String::as_str).unwrap_or("-");
             out.push_str(&format!("leaf {id} {}\n", escape(dir)));
+            if let Some(text) = screens.get(id).filter(|t| !t.is_empty()) {
+                let encoded = crate::terminal::graphics::base64_encode(text.as_bytes());
+                out.push_str(&format!("scrollback {encoded}\n"));
+            }
         }
         Shape::Split {
             axis,
@@ -220,8 +255,8 @@ fn write_shape(out: &mut String, shape: &Shape, dirs: &HashMap<u32, String>) {
                 Axis::Vertical => 'V',
             };
             out.push_str(&format!("{axis} {ratio:.6}\n"));
-            write_shape(out, first, dirs);
-            write_shape(out, second, dirs);
+            write_shape(out, first, dirs, screens);
+            write_shape(out, second, dirs, screens);
         }
     }
 }
@@ -255,6 +290,8 @@ mod tests {
         let mut dirs = HashMap::new();
         dirs.insert(1, "/tmp/left".into());
         dirs.insert(2, "/tmp/right dir".into());
+        let mut screens = HashMap::new();
+        screens.insert(1, "$ ls\nfile\nこんにちは".into());
         Session {
             current: 0,
             tree: true,
@@ -270,6 +307,7 @@ mod tests {
                     second: Box::new(Shape::Leaf(2)),
                 },
                 dirs,
+                screens,
             }],
         }
     }
@@ -302,5 +340,40 @@ mod tests {
     fn a_session_saved_by_trex_still_loads() {
         let text = encode(&sample()).replace(HEADER, LEGACY_HEADER);
         assert_eq!(decode(&text).unwrap().tabs.len(), 1);
+    }
+
+    #[test]
+    fn a_v1_session_loads_without_pane_text() {
+        let text = "\
+kodama-session 1
+current 0
+tree 0
+tab
+active 1
+zoomed 0
+title -
+leaf 1 /tmp
+";
+        let session = decode(text).unwrap();
+        assert!(session.tabs[0].screens.is_empty());
+        assert_eq!(session.tabs[0].dirs.get(&1).unwrap(), "/tmp");
+    }
+
+    #[test]
+    fn a_broken_scrollback_keeps_the_layout() {
+        let text = "\
+kodama-session 2
+current 0
+tree 0
+tab
+active 1
+zoomed 0
+title -
+leaf 1 /tmp
+scrollback ???
+";
+        let session = decode(text).unwrap();
+        assert!(session.tabs[0].screens.is_empty());
+        assert_eq!(session.tabs[0].dirs.get(&1).unwrap(), "/tmp");
     }
 }

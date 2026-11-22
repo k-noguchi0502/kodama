@@ -516,6 +516,41 @@ impl Terminal {
         }
     }
 
+    /// Commands and output on the primary screen. A full-screen program
+    /// (the alternate screen) is left out, so quitting one does not replace
+    /// the shell transcript that was behind it.
+    pub fn transcript(&mut self) -> String {
+        if !self.alt_screen {
+            return self.history_text();
+        }
+        std::mem::swap(&mut self.grid, &mut self.other_grid);
+        let text = self.history_text();
+        std::mem::swap(&mut self.grid, &mut self.other_grid);
+        text
+    }
+
+    /// Shows `text` as if the shell had printed it, and leaves the cursor on
+    /// the following line. Control characters other than tab and newline are
+    /// dropped so a saved screen cannot replay escape sequences.
+    pub fn show_transcript(&mut self, text: &str) {
+        let mut bytes = Vec::with_capacity(text.len() + 2);
+        for c in text.chars() {
+            if c == '\n' {
+                bytes.extend_from_slice(b"\r\n");
+            } else if c == '\t' || !c.is_control() {
+                let mut buf = [0u8; 4];
+                bytes.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            }
+        }
+        if bytes.is_empty() {
+            return;
+        }
+        if !bytes.ends_with(b"\n") {
+            bytes.extend_from_slice(b"\r\n");
+        }
+        self.feed(&bytes);
+    }
+
     /// The output of the last finished command, between its OSC 133;C and
     /// D marks. `None` without marks or once it left the history.
     pub fn last_command_output(&self) -> Option<String> {
@@ -2243,6 +2278,18 @@ mod tests {
         let all = t.history_text();
         assert!(all.starts_with("$ ls\none\ntwo three four\n"), "{all:?}");
         assert!(all.ends_with("x1\nx2\n$"), "{all:?}");
+    }
+
+    #[test]
+    fn a_transcript_is_shown_again_and_ignores_the_alternate_screen() {
+        let mut t = Terminal::new(20, 8, 100);
+        t.show_transcript("$ echo hi\nhi\n\x1b[2J");
+        t.feed(b"$ ");
+        // The escape is not replayed, so the earlier lines stay put.
+        assert_eq!(t.transcript(), "$ echo hi\nhi\n[2J\n$");
+        t.feed(b"\x1b[?1049hhtop");
+        assert!(t.is_alt_screen());
+        assert_eq!(t.transcript(), "$ echo hi\nhi\n[2J\n$");
     }
 
     #[test]

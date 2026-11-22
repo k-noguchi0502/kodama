@@ -590,6 +590,22 @@ fn read_medium(cmd: &Command, name: &[u8]) -> Result<Vec<u8>, String> {
     Ok(data)
 }
 
+pub(crate) fn base64_encode(data: &[u8]) -> String {
+    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in data.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |acc, (i, &b)| acc | (b as u32) << (16 - 8 * i));
+        for i in 0..=chunk.len() {
+            out.push(TABLE[(n >> (18 - 6 * i) & 63) as usize] as char);
+        }
+        out.push_str(&"=".repeat(3 - chunk.len()));
+    }
+    out
+}
+
 pub(crate) fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
     fn value(c: u8) -> Option<u32> {
         Some(match c {
@@ -631,33 +647,17 @@ mod tests {
         }
     }
 
-    fn b64(data: &[u8]) -> String {
-        const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut out = String::new();
-        for chunk in data.chunks(3) {
-            let n = chunk
-                .iter()
-                .enumerate()
-                .fold(0u32, |acc, (i, &b)| acc | (b as u32) << (16 - 8 * i));
-            for i in 0..=chunk.len() {
-                out.push(TABLE[(n >> (18 - 6 * i) & 63) as usize] as char);
-            }
-            out.push_str(&"=".repeat(3 - chunk.len()));
-        }
-        out
-    }
-
     #[test]
     fn base64_round_trip() {
         for data in [&b""[..], b"a", b"ab", b"abc", b"\x00\xff\x10kodama"] {
-            assert_eq!(base64_decode(b64(data).as_bytes()).unwrap(), data);
+            assert_eq!(base64_decode(base64_encode(data).as_bytes()).unwrap(), data);
         }
     }
 
     #[test]
     fn transmit_and_display_places_at_the_cursor() {
         let mut g = Graphics::default();
-        let pixels = b64(&[255u8; 4 * 15 * 30]);
+        let pixels = base64_encode(&[255u8; 4 * 15 * 30]);
         let out = g.command(
             format!("a=T,f=32,s=15,v=30,i=7;{pixels}").as_bytes(),
             &ctx(),
@@ -673,7 +673,7 @@ mod tests {
     #[test]
     fn chunked_rgb_with_explicit_cells() {
         let mut g = Graphics::default();
-        let pixels = b64(&[1u8, 2, 3, 4, 5, 6]);
+        let pixels = base64_encode(&[1u8, 2, 3, 4, 5, 6]);
         let (a, b) = pixels.split_at(4);
         assert_eq!(
             g.command(
@@ -702,7 +702,7 @@ mod tests {
     #[test]
     fn delete_by_id_frees_data_only_when_uppercase() {
         let mut g = Graphics::default();
-        let pixels = b64(&[0u8; 4]);
+        let pixels = base64_encode(&[0u8; 4]);
         g.command(format!("a=T,s=1,v=1,i=1,q=2;{pixels}").as_bytes(), &ctx());
         g.command(b"a=d,d=i,i=1", &ctx());
         assert!(g.placements.is_empty());
@@ -715,7 +715,7 @@ mod tests {
     #[test]
     fn scrolling_without_history_moves_and_drops_placements() {
         let mut g = Graphics::default();
-        let pixels = b64(&[0u8; 4]);
+        let pixels = base64_encode(&[0u8; 4]);
         g.command(format!("a=T,s=1,v=1,i=1,q=2;{pixels}").as_bytes(), &ctx());
         g.scroll(0..24, -3);
         assert_eq!(g.placements[0].line, 2);

@@ -361,12 +361,23 @@ impl App {
         };
         // The first shell becomes the restored current tab's active pane, so
         // restoring starts no shell only to close it again.
-        let cwd = saved
-            .as_ref()
-            .and_then(|s| s.tabs.get(s.current))
-            .and_then(|t| t.dirs.get(&t.active).cloned())
-            .or_else(|| config.shell.working_directory.clone());
-        let pane = spawn_pane(&renderer, &self.proxy, config, cwd.as_deref(), rect, 1)?;
+        let saved_pane = saved.as_ref().and_then(|s| s.tabs.get(s.current)).map(|t| {
+            (
+                t.dirs.get(&t.active).cloned(),
+                t.screens.get(&t.active).cloned(),
+            )
+        });
+        let (cwd, screen) = saved_pane.unwrap_or((None, None));
+        let cwd = cwd.or_else(|| config.shell.working_directory.clone());
+        let pane = spawn_pane(
+            &renderer,
+            &self.proxy,
+            config,
+            cwd.as_deref(),
+            screen.as_deref(),
+            rect,
+            1,
+        )?;
         for message in self.startup_messages.iter().chain(&background_error) {
             pane.term().feed(error_banner(message).as_bytes());
         }
@@ -869,6 +880,7 @@ fn spawn_pane(
     proxy: &EventLoopProxy<UserEvent>,
     config: &Config,
     cwd: Option<&str>,
+    screen: Option<&str>,
     rect: Rect,
     id: PaneId,
 ) -> Result<Pane, String> {
@@ -877,6 +889,10 @@ fn spawn_pane(
     let mut term = Terminal::new(cols, rows, config.scrollback);
     term.cell_px = (cw, ch);
     configure_terminal(&mut term, config);
+    // Before the shell starts, so its prompt is printed under the old text.
+    if let Some(text) = screen.filter(|text| !text.is_empty()) {
+        term.show_transcript(text);
+    }
     let term = Arc::new(Mutex::new(term));
 
     let program = config.shell_program();
@@ -968,6 +984,23 @@ fn remember_dirs(shape: &Shape, dirs: &mut HashMap<u32, String>, state: &State) 
     }
 }
 
+fn remember_screens(shape: &Shape, screens: &mut HashMap<u32, String>, state: &State) {
+    match shape {
+        Shape::Leaf(id) => {
+            if let Some(pane) = state.panes.get(id) {
+                let text = pane.term().transcript();
+                if !text.is_empty() {
+                    screens.insert(*id, text);
+                }
+            }
+        }
+        Shape::Split { first, second, .. } => {
+            remember_screens(first, screens, state);
+            remember_screens(second, screens, state);
+        }
+    }
+}
+
 /// What every restored pane is started with.
 struct Spawn<'a> {
     renderer: &'a Renderer,
@@ -983,6 +1016,7 @@ struct Spawn<'a> {
 fn spawn_shape(
     shape: Shape,
     dirs: &HashMap<u32, String>,
+    screens: &HashMap<u32, String>,
     ids: &mut HashMap<u32, PaneId>,
     next_id: &mut PaneId,
     spawned: &mut HashMap<PaneId, Pane>,
@@ -1000,11 +1034,13 @@ fn spawn_shape(
             let id = *next_id;
             *next_id += 1;
             let cwd = dirs.get(&old).map(String::as_str);
+            let screen = screens.get(&old).map(String::as_str);
             let pane = spawn_pane(
                 spawn.renderer,
                 spawn.proxy,
                 spawn.config,
                 cwd,
+                screen,
                 spawn.rect,
                 id,
             )?;
@@ -1020,8 +1056,12 @@ fn spawn_shape(
         } => Ok(Shape::Split {
             axis,
             ratio,
-            first: Box::new(spawn_shape(*first, dirs, ids, next_id, spawned, spawn)?),
-            second: Box::new(spawn_shape(*second, dirs, ids, next_id, spawned, spawn)?),
+            first: Box::new(spawn_shape(
+                *first, dirs, screens, ids, next_id, spawned, spawn,
+            )?),
+            second: Box::new(spawn_shape(
+                *second, dirs, screens, ids, next_id, spawned, spawn,
+            )?),
         }),
     }
 }
@@ -1711,6 +1751,7 @@ impl State {
             &self.proxy,
             config,
             cwd.as_deref(),
+            None,
             rect,
             id,
         ) {
@@ -1874,6 +1915,7 @@ impl State {
             &self.proxy,
             config,
             cwd.as_deref(),
+            None,
             rect,
             id,
         ) {
@@ -2897,13 +2939,16 @@ impl State {
                     )
                 };
                 let mut dirs = HashMap::new();
+                let mut screens = HashMap::new();
                 remember_dirs(&shape, &mut dirs, self);
+                remember_screens(&shape, &mut screens, self);
                 crate::session::SavedTab {
                     title,
                     active,
                     zoomed,
                     shape,
                     dirs,
+                    screens,
                 }
             })
             .collect();
@@ -2941,6 +2986,7 @@ impl State {
             let shape = spawn_shape(
                 tab.shape,
                 &tab.dirs,
+                &tab.screens,
                 &mut ids,
                 &mut next_id,
                 &mut spawned,

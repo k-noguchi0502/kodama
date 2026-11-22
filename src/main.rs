@@ -35,7 +35,7 @@ fn main() {
     diag::init();
     log::info!(
         "start version {} pid {} log {}",
-        include_str!("../VERSION").trim(),
+        config::version(),
         std::process::id(),
         diag::path().display(),
     );
