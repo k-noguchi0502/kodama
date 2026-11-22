@@ -516,39 +516,73 @@ impl Terminal {
         }
     }
 
-    /// Commands and output on the primary screen. A full-screen program
-    /// (the alternate screen) is left out, so quitting one does not replace
-    /// the shell transcript that was behind it.
+    /// Commands and output on the primary screen, with the colours and text
+    /// attributes that were on each cell. A full-screen program (the
+    /// alternate screen) is left out, so quitting one does not replace the
+    /// shell transcript that was behind it.
     pub fn transcript(&mut self) -> String {
         if !self.alt_screen {
-            return self.history_text();
+            return self.styled_history();
         }
         std::mem::swap(&mut self.grid, &mut self.other_grid);
-        let text = self.history_text();
+        let text = self.styled_history();
         std::mem::swap(&mut self.grid, &mut self.other_grid);
         text
     }
 
-    /// Shows `text` as if the shell had printed it, and leaves the cursor on
-    /// the following line. Control characters other than tab and newline are
-    /// dropped so a saved screen cannot replay escape sequences.
-    pub fn show_transcript(&mut self, text: &str) {
-        let mut bytes = Vec::with_capacity(text.len() + 2);
-        for c in text.chars() {
-            if c == '\n' {
-                bytes.extend_from_slice(b"\r\n");
-            } else if c == '\t' || !c.is_control() {
-                let mut buf = [0u8; 4];
-                bytes.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+    /// The screen as text plus the SGR sequences that reproduce its colours.
+    fn styled_history(&self) -> String {
+        let last = (0..self.total_lines())
+            .rev()
+            .find(|&line| self.line(line).iter().any(|cell| !is_padding(cell)));
+        let Some(last) = last else {
+            return String::new();
+        };
+        let mut out = String::new();
+        let mut style = PLAIN;
+        for line in 0..=last {
+            let row = self.line(line);
+            let wrapped = row
+                .last()
+                .is_some_and(|cell| cell.flags() & flags::WRAPPED != 0);
+            let end = if wrapped {
+                row.len()
+            } else {
+                row.iter()
+                    .rposition(|cell| !is_padding(cell))
+                    .map_or(0, |i| i + 1)
+            };
+            for cell in row
+                .iter()
+                .take(end)
+                .filter(|cell| cell.flags() & flags::WIDE_SPACER == 0)
+            {
+                let next = appearance(cell);
+                if next != style {
+                    out.push_str(&sgr(next));
+                    style = next;
+                }
+                cell.push_text(&mut out);
+            }
+            if line != last && !wrapped {
+                out.push('\n');
             }
         }
-        if bytes.is_empty() {
-            return;
+        if style != PLAIN {
+            out.push_str("\x1b[0m");
         }
-        if !bytes.ends_with(b"\n") {
-            bytes.extend_from_slice(b"\r\n");
+        out
+    }
+
+    /// Shows `text` as if the shell had printed it, and leaves the cursor on
+    /// the following line. SGR colour sequences are kept. Every other escape
+    /// sequence is dropped, so a saved screen cannot clear itself or write
+    /// the clipboard.
+    pub fn show_transcript(&mut self, text: &str) {
+        let bytes = sanitize_transcript(text.as_bytes());
+        if !bytes.is_empty() {
+            self.feed(&bytes);
         }
-        self.feed(&bytes);
     }
 
     /// The output of the last finished command, between its OSC 133;C and
@@ -2185,6 +2219,132 @@ fn dec_special(c: char) -> char {
     }
 }
 
+/// Bold, dim, italic, underline, inverse, hidden and strike. The wrap and
+/// width flags describe the grid, not the text, so a restored line rewraps.
+const APPEARANCE: u16 = flags::BOLD
+    | flags::DIM
+    | flags::ITALIC
+    | flags::UNDERLINE
+    | flags::INVERSE
+    | flags::HIDDEN
+    | flags::STRIKE;
+
+type Style = (Color, Color, u16);
+
+const PLAIN: Style = (Color::Default, Color::Default, 0);
+
+fn appearance(cell: &Cell) -> Style {
+    (cell.fg, cell.bg, cell.flags() & APPEARANCE)
+}
+
+/// A default blank. Coloured spaces are content: a prompt can paint them.
+fn is_padding(cell: &Cell) -> bool {
+    cell.cluster().is_none() && matches!(cell.c(), ' ' | '\0') && appearance(cell) == PLAIN
+}
+
+fn sgr((fg, bg, flags): Style) -> String {
+    if (fg, bg, flags) == PLAIN {
+        return "\u{1b}[0m".to_string();
+    }
+    let mut params = vec!["0".to_string()];
+    for (bit, code) in [
+        (flags::BOLD, "1"),
+        (flags::DIM, "2"),
+        (flags::ITALIC, "3"),
+        (flags::UNDERLINE, "4"),
+        (flags::INVERSE, "7"),
+        (flags::HIDDEN, "8"),
+        (flags::STRIKE, "9"),
+    ] {
+        if flags & bit != 0 {
+            params.push(code.to_string());
+        }
+    }
+    let color = |kind: u8, color: Color, params: &mut Vec<String>| match color {
+        Color::Default => {}
+        Color::Indexed(n) => params.push(format!("{kind};5;{n}")),
+        Color::Rgb(r, g, b) => params.push(format!("{kind};2;{r};{g};{b}")),
+    };
+    color(38, fg, &mut params);
+    color(48, bg, &mut params);
+    format!("\u{1b}[{}m", params.join(";"))
+}
+
+/// Text plus SGR, with `\n` turned into `\r\n`. Other escape sequences are
+/// removed whole, so their trailing bytes are not printed as text.
+fn sanitize_transcript(text: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len() + 2);
+    let mut i = 0;
+    while i < text.len() {
+        match text[i] {
+            b'\n' => {
+                out.extend_from_slice(b"\r\n");
+                i += 1;
+            }
+            b'\r' => i += 1,
+            0x1b => {
+                let (len, keep) = escape_span(&text[i..]);
+                if keep {
+                    out.extend_from_slice(&text[i..i + len]);
+                }
+                i += len;
+            }
+            b'\t' => {
+                out.push(b'\t');
+                i += 1;
+            }
+            byte if byte >= 0x20 && byte != 0x7f => {
+                out.push(byte);
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    if !out.is_empty() && !out.ends_with(b"\n") {
+        out.extend_from_slice(b"\r\n");
+    }
+    out
+}
+
+/// The length of the escape at the front of `bytes`, and whether it is SGR.
+fn escape_span(bytes: &[u8]) -> (usize, bool) {
+    if bytes.first() != Some(&0x1b) {
+        return (1, false);
+    }
+    match bytes.get(1) {
+        Some(&b'[') => csi_span(bytes),
+        Some(&b']') => (osc_len(bytes), false),
+        Some(_) => (2, false),
+        None => (1, false),
+    }
+}
+
+fn csi_span(bytes: &[u8]) -> (usize, bool) {
+    let mut i = 2;
+    while i < bytes.len() && matches!(bytes[i], 0x20..=0x3f) {
+        i += 1;
+    }
+    if i < bytes.len() && matches!(bytes[i], 0x40..=0x7e) {
+        (i + 1, bytes[i] == b'm')
+    } else {
+        (1, false)
+    }
+}
+
+fn osc_len(bytes: &[u8]) -> usize {
+    let mut i = 2;
+    while i < bytes.len() {
+        if bytes[i] == 0x07 {
+            return i + 1;
+        }
+        if bytes[i] == 0x1b && bytes.get(i + 1) == Some(&b'\\') {
+            return i + 2;
+        }
+        i += 1;
+    }
+    bytes.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2285,11 +2445,35 @@ mod tests {
         let mut t = Terminal::new(20, 8, 100);
         t.show_transcript("$ echo hi\nhi\n\x1b[2J");
         t.feed(b"$ ");
-        // The escape is not replayed, so the earlier lines stay put.
-        assert_eq!(t.transcript(), "$ echo hi\nhi\n[2J\n$");
+        // A clear sequence is not replayed, and it does not erase the lines.
+        assert_eq!(t.transcript(), "$ echo hi\nhi\n$");
         t.feed(b"\x1b[?1049hhtop");
         assert!(t.is_alt_screen());
-        assert_eq!(t.transcript(), "$ echo hi\nhi\n[2J\n$");
+        assert_eq!(t.transcript(), "$ echo hi\nhi\n$");
+    }
+
+    #[test]
+    fn a_restored_transcript_keeps_colours_and_attributes() {
+        let mut t = Terminal::new(20, 6, 100);
+        t.feed(b"\x1b[1;38;2;1;2;3;48;5;200mred\x1b[0m plain\r\n\x1b[41m  \x1b[0m\r\n");
+        let saved = t.transcript();
+        let mut restored = Terminal::new(20, 6, 100);
+        restored.show_transcript(&saved);
+        let row = restored.line(0);
+        assert_eq!(row[0].c(), 'r');
+        assert_eq!(row[0].fg, Color::Rgb(1, 2, 3));
+        assert_eq!(row[0].bg, Color::Indexed(200));
+        assert_ne!(row[0].flags() & flags::BOLD, 0);
+        assert_eq!(row[2].fg, Color::Rgb(1, 2, 3));
+        let plain = row.iter().find(|cell| cell.c() == 'p').unwrap();
+        assert_eq!(plain.fg, Color::Default);
+        assert_eq!(plain.bg, Color::Default);
+        assert_eq!(plain.flags() & flags::BOLD, 0);
+        let blanks = restored.line(1);
+        assert_eq!(blanks[0].c(), ' ');
+        assert_eq!(blanks[0].bg, Color::Indexed(1));
+        assert_eq!(blanks[1].bg, Color::Indexed(1));
+        assert_eq!(restored.transcript(), saved);
     }
 
     #[test]
