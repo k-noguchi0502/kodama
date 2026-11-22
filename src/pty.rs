@@ -87,13 +87,7 @@ impl Pty {
             cmd.env_remove(key);
         }
         cmd.envs(env);
-        if let Some(dir) = working_directory {
-            let dir = match dir.strip_prefix("~/") {
-                Some(rest) => std::env::var("HOME")
-                    .map(|h| format!("{h}/{rest}"))
-                    .unwrap_or(dir.into()),
-                None => dir.to_string(),
-            };
+        if let Some(dir) = working_directory.and_then(resolve_working_directory) {
             cmd.current_dir(dir);
         }
 
@@ -178,6 +172,29 @@ impl Drop for Pty {
     }
 }
 
+/// Expands `~/` and drops a directory that is not there.
+///
+/// `Command` reports a missing current directory as "No such file or
+/// directory" on the program itself. A restored pane whose directory was
+/// removed would otherwise exit kodama at startup.
+fn resolve_working_directory(dir: &str) -> Option<PathBuf> {
+    let expanded = match dir.strip_prefix("~/") {
+        Some(rest) => std::env::var("HOME")
+            .map(|home| format!("{home}/{rest}"))
+            .unwrap_or_else(|_| dir.to_string()),
+        None => dir.to_string(),
+    };
+    let path = PathBuf::from(&expanded);
+    if path.is_dir() {
+        Some(path)
+    } else {
+        log::warn!(
+            "working directory {expanded} does not exist; starting in the current directory"
+        );
+        None
+    }
+}
+
 fn set_cloexec(fd: i32) -> io::Result<()> {
     // SAFETY: fcntl on a descriptor we own.
     let ret = unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
@@ -185,5 +202,42 @@ fn set_cloexec(fd: i32) -> io::Result<()> {
         Err(io::Error::last_os_error())
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_keeps_an_existing_directory() {
+        let dir = std::env::temp_dir();
+        let got = resolve_working_directory(dir.to_str().unwrap()).unwrap();
+        assert_eq!(got.canonicalize().unwrap(), dir.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn resolve_expands_a_home_relative_directory() {
+        let home = PathBuf::from(std::env::var("HOME").unwrap());
+        let got = resolve_working_directory("~/").unwrap();
+        assert_eq!(got.canonicalize().unwrap(), home.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn resolve_drops_a_missing_directory() {
+        assert!(resolve_working_directory("/no/such/kodama/directory").is_none());
+    }
+
+    #[test]
+    fn missing_directory_still_spawns_the_program() {
+        Pty::spawn(
+            "/bin/true",
+            &[],
+            &HashMap::new(),
+            Some("/no/such/kodama/directory"),
+            80,
+            24,
+        )
+        .expect("a missing directory must not fail the spawn");
     }
 }
