@@ -531,6 +531,9 @@ impl Terminal {
     }
 
     /// The screen as text plus the SGR sequences that reproduce its colours.
+    ///
+    /// The line the cursor is on is left out. A new shell redraws its prompt
+    /// there, and a partial line would make zsh print `%` and move down.
     fn styled_history(&self) -> String {
         let last = (0..self.total_lines())
             .rev()
@@ -538,9 +541,28 @@ impl Terminal {
         let Some(last) = last else {
             return String::new();
         };
+        // The alternate screen's cursor belongs to the full-screen program,
+        // not to the shell grid just swapped in.
+        let cursor_line = (!self.alt_screen).then_some(self.scrollback.len() + self.cursor.y);
+        let omit_from = cursor_line.and_then(|cursor| {
+            if cursor > last {
+                return None;
+            }
+            let start = logical_start(self, cursor);
+            let mut end = cursor;
+            while end < last && row_wrapped(self, end) {
+                end += 1;
+            }
+            (end == last).then_some(start)
+        });
+        let text_last = match omit_from {
+            Some(0) => return String::new(),
+            Some(start) => start - 1,
+            None => last,
+        };
         let mut out = String::new();
         let mut style = PLAIN;
-        for line in 0..=last {
+        for line in 0..=text_last {
             let row = self.line(line);
             let wrapped = row
                 .last()
@@ -564,23 +586,21 @@ impl Terminal {
                 }
                 cell.push_text(&mut out);
             }
-            if line != last && !wrapped {
+            if line != text_last && !wrapped {
                 out.push('\n');
             }
         }
         if style != PLAIN {
             out.push_str("\x1b[0m");
         }
-        // The cursor often sits in empty space after the prompt. Stop there.
-        // A blank line below the text is part of that position; the line
-        // after it is not. The alternate screen's cursor belongs to the
-        // full-screen program, not to the shell grid just swapped in.
-        if !self.alt_screen {
-            let cursor_line = self.scrollback.len() + self.cursor.y;
-            if cursor_line > last {
-                for _ in last..cursor_line {
-                    out.push('\n');
-                }
+        // Land at column 0 of the cursor's line. A blank line the cursor is
+        // already on is included; the line after it is not.
+        let land_on = omit_from.or(cursor_line.filter(|&cursor| cursor > last));
+        if let Some(row) = land_on
+            && row > text_last
+        {
+            for _ in text_last..row {
+                out.push('\n');
             }
         }
         out
@@ -2249,6 +2269,21 @@ fn appearance(cell: &Cell) -> Style {
     (cell.fg, cell.bg, cell.flags() & APPEARANCE)
 }
 
+fn row_wrapped(term: &Terminal, line: usize) -> bool {
+    term.line(line)
+        .last()
+        .is_some_and(|cell| cell.flags() & flags::WRAPPED != 0)
+}
+
+/// First row of the logical line that contains `line`.
+fn logical_start(term: &Terminal, line: usize) -> usize {
+    let mut start = line;
+    while start > 0 && row_wrapped(term, start - 1) {
+        start -= 1;
+    }
+    start
+}
+
 /// A default blank. Coloured spaces are content: a prompt can paint them.
 fn is_padding(cell: &Cell) -> bool {
     cell.cluster().is_none() && matches!(cell.c(), ' ' | '\0') && appearance(cell) == PLAIN
@@ -2454,8 +2489,9 @@ mod tests {
         let mut t = Terminal::new(20, 8, 100);
         t.show_transcript("$ echo hi\nhi\n\x1b[2J");
         t.feed(b"$ ");
-        // A clear sequence is not replayed, and it does not erase the lines.
-        assert_eq!(t.transcript(), "$ echo hi\nhi\n$");
+        // A clear sequence is not replayed, and the prompt line is left for
+        // the shell so it is not saved as a partial line.
+        assert_eq!(t.transcript(), "$ echo hi\nhi\n");
         t.feed(b"\x1b[?1049hhtop");
         assert!(t.is_alt_screen());
         assert_eq!(t.transcript(), "$ echo hi\nhi\n$");
@@ -2490,14 +2526,21 @@ mod tests {
         let mut t = Terminal::new(20, 6, 100);
         t.feed(b"$ echo hi\r\nhi\r\n$ ");
         let saved = t.transcript();
-        let row = t.cursor_position().1;
+        assert_eq!(saved, "$ echo hi\nhi\n");
         let mut restored = Terminal::new(20, 6, 100);
         restored.show_transcript(&saved);
-        // The prompt's trailing space is empty padding, so the cursor sits
-        // on that same line and the line under it stays empty.
-        assert_eq!(restored.cursor_position().1, row);
+        // Column 0, so the shell does not mark the line with '%' and wrap.
+        assert_eq!(restored.cursor_position(), (0, 2));
+        assert!(restored.line(2).iter().all(is_padding));
+        assert!(restored.line(3).iter().all(is_padding));
         assert_eq!(restored.transcript(), saved);
-        assert!(restored.line(row + 1).iter().all(is_padding));
+
+        let mut t = Terminal::new(4, 6, 100);
+        t.feed(b"ok\r\nabcdef");
+        assert_eq!(t.transcript(), "ok\n");
+        let mut restored = Terminal::new(4, 6, 100);
+        restored.show_transcript(&t.transcript());
+        assert_eq!(restored.cursor_position(), (0, 1));
 
         // A blank line the cursor is on is kept. The line under that is not.
         let mut t = Terminal::new(20, 6, 100);
